@@ -146,9 +146,11 @@ xychart-beta
     title "Z-Score Filter Performance (Confusion Matrix %)"
     x-axis ["True Positive (Anomalies Blocked)", "True Negative (Normal Data Passed)", "False Positive (False Alarm)"]
     y-axis "Percentage (%)" 0 --> 100
-    bar [52, 99, 1]
+    bar [79.4, 97.8, 2.2]
 ```
 *Figure 7: Performance analysis showcasing True Positive Rate (TPR) vs False Positive Rate (FPR) of the on-board anomaly sequence filtering.*
+
+> **Note:** These performance ratios (TPR/FPR) vary dynamically in real-time. By modifying the anomaly injection probability directly from the remote Python GUI, it is possible to observe the shifting effectiveness of the Z-Score filter.
 
 ### Data Payload Compression (MQTT & LoRaWAN)
 By executing FFT and filtering at the Edge, the node avoids blindly transmitting raw telemetry. 
