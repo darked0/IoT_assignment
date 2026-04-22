@@ -79,7 +79,7 @@ while (micros() - start_time < 1000000) {
     count++;
 }
 ```
-This calibration highlights the massive disparity between Hardware constraints (where the ESP32's internal ADC bare-metal speed can easily peak between 80 kHz and 100 kHz) and the FreeRTOS Tick Rate constraints (generally statistically capped at 1000 Hz or 1ms). Therefore, the maximum operational frequency was deliberately capped at the RTOS limitations to prevent buffer underruns.
+This calibration highlights the massive disparity between Hardware constraints (where the ESP32's internal ADC bare-metal speed can easily peak between 10 kHz and 20 kHz) and the FreeRTOS Tick Rate constraints (generally statistically capped at 1000 Hz or 1ms). Therefore, the maximum operational frequency was deliberately capped at the RTOS limitations to prevent buffer underruns.
 
 ### Energy Profiling Methodology (Hardware vs. Software)
 An accurate execution of profiling cannot ignore the Observer Effect. It was empirically and strictly chosen not to enclose the energy computational overhead within `main.cpp` to avoid I2C bus latencies caused by querying a sensor, which in turn falsely inflates the SoC's consumption.
@@ -119,7 +119,7 @@ xychart-beta
 ### Data Payload Compression (MQTT & LoRaWAN)
 By executing FFT and filtering at the Edge, the node avoids blindly transmitting raw telemetry. 
 Without edge processing, transmitting a raw signal at 100Hz would generate ~2000 Bytes every 5 seconds, instantly saturating the LoRaWAN spectrum constraints. Instead, the local aggregation drastically slashes the telemetry data volume by over **99%**:
-- **Local Network (MQTT):** A lightweight JSON string containing only the aggregated mean, TPR, FPR, and energy metrics (~6-10 Bytes).
+- **Edge Network (MQTT):** A lightweight JSON string containing only the aggregated mean, TPR, FPR, and energy metrics (~6-10 Bytes).
 - **Cloud Network (LoRaWAN):** A microscopic, serialized 2-byte array strictly respecting TTN's Duty Cycle and Fair Use Policies.
 
 ---
