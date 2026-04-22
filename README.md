@@ -39,7 +39,7 @@ In the embryonic phase, hardware-in-the-loop simulations were employed via the W
 - Structuring and debugging of operational thread partitioning using FreeRTOS, ensuring stability between task scheduling and inter-process queues (`QueueHandle_t`).
 - Validation of the accuracy of anomaly detection filters (Z-Score and Hampel) in an offline and highly predictable environment, completely eliminating theoretical-hardware risks prior to deployment.
 
-![Wokwi Setup](assets/wokwi_setup.png)
+![Wokwi Setup](assets/digital_twin.png)
 *Figure 2: Wokwi simulation environment setup.*
 
 ### Phase 2: Real Hardware and Deployment
