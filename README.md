@@ -223,6 +223,7 @@ This guide illustrates the linear workflow required to test or inspect the proje
 - [PlatformIO IDE](https://platformio.org/) (VSCode extension recommended).
 - Python >= 3.12 (Virtual Environment recommended).
 - Physical ESP32-S3 board (Heltec WiFi LoRa 32 V3) or configured Wokwi emulation environment.
+- **MQTT Broker:** Ensure an MQTT Broker (e.g., Eclipse Mosquitto) is running locally or use a public broker (like `broker.hivemq.com`). Update the `mqtt_server` IP address in the ESP32 code and the Python dashboard accordingly.
 
 ### 5.1 Firmware Flash and Compilation
 1. Clone the repository and open the `PlatformIO/Projects/simulation` folder.
@@ -239,7 +240,11 @@ This guide illustrates the linear workflow required to test or inspect the proje
 4. Execute the PlatformIO Build and Upload command.
 
 ### 5.2 Starting Python Monitoring (Edge Dashboard)
-The project provides a terminal-based dashboard (or dedicated GUI) to interpolate and visually inspect the board's edge logs via MQTT socket. Execute within the same folder:
+The project provides a terminal-based dashboard (or dedicated GUI) to interpolate and visually inspect the board's edge logs via MQTT socket.
+
+> **Note on Tkinter:** The dashboard relies on the `tkinter` library for its graphical interface. While `tkinter` is generally included in the standard Python installation on Windows and macOS, Linux users may need to install it manually via their package manager (e.g., `sudo apt-get install python3-tk` on Ubuntu/Debian).
+
+Execute within the same folder:
 
 ```bash
 # Replace "python3" or "python" depending on environmental path (optimal version recommended: 3.12)
