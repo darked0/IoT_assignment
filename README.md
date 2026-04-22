@@ -1,0 +1,211 @@
+# IoT & Edge Computing Project: Adaptive Sampling and LoRaWAN communication on ESP32
+
+This repository documents a complete Edge-to-Cloud infrastructure developed to optimize the collection, analysis, and transmission of sensor data in IoT environments. The project implements advanced *Edge Computing* techniques, local digital signal processing (integrated FFT), statistical anomaly filtering, and adaptive transmission utilizing MQTT and LoRaWAN protocols.
+
+```mermaid
+graph LR
+    subgraph ESP32["ESP32-S3 (Edge Node)"]
+        direction LR
+        SG[Signal Gen Task] -->|Raw Data| FFT[FFT Task]
+        FFT -->|Adaptive Freq| FLT[Z-Score Filter Task]
+        FLT -->|Clean Data| AGG[Aggregation Task]
+    end
+
+    subgraph Local["Local Network"]
+        MQTT[MQTT Broker] --> DASH[Python Dashboard]
+    end
+
+    subgraph Cloud["The Things Network"]
+        LORA[LoRaWAN SX1262] --> TTN[Cloud Server]
+    end
+
+    AGG -->|Full JSON Report| MQTT
+    AGG -->|2-Byte Average| LORA
+
+    classDef edge fill:#f9f,stroke:#333,stroke-width:2px;
+    class ESP32 edge;
+```
+*Figure 1: High-level architectural flowchart (ESP32 -> Edge Filters -> MQTT/LoRaWAN -> Cloud).*
+
+---
+
+## 1. The Iterative Development Process ("Digital Twin")
+The firmware development strictly adhered to the "Digital Twin" methodology, structured in two distinctive phases to mitigate risk and validate the algorithmic logic independently of physical hardware constraints.
+
+### Phase 1: Simulation (Wokwi)
+In the embryonic phase, hardware-in-the-loop simulations were employed via the Wokwi platform. This approach enabled:
+
+- Iterative testing of complex Digital Signal Processing (DSP) logic, such as the Fast Fourier Transform (FFT) extraction.
+- Structuring and debugging of operational thread partitioning using FreeRTOS, ensuring stability between task scheduling and inter-process queues (`QueueHandle_t`).
+- Validation of the accuracy of anomaly detection filters (Z-Score and Hampel) in an offline and highly predictable environment, completely eliminating theoretical-hardware risks prior to deployment.
+
+### Phase 2: Real Hardware and Deployment
+Following the successful outcome of the simulations, the firmware was physically ported to the Heltec WiFi LoRa 32 V3 (based on ESP32-S3) board. During this migration, the specific pinout of the physical board was adapted, implementing the correct I2C management for the OLED and the proper manipulation of the logical `VEXT` pin to govern on-demand power delivery to the screen's secondary electronics.
+
+---
+
+## 2. Technical Choices and Architectural Justifications
+This section constitutes the academic core of the project, detailing the engineering directives that guided the system's implementation.
+
+### Dual-Core RTOS Partitioning and Asynchronous Queues
+To guarantee deterministic Real-Time constraints, the workload is explicitly divided between the ESP32's dual cores. Heavy mathematical operations (Signal Generation, FFT, Filtering) are pinned to **Core 1**, utilizing `vTaskDelayUntil()` to prevent timer drift. The network stacks (WiFi, MQTT, LoRaWAN) and the Data Aggregation are pinned to **Core 0**. 
+Data decoupling is achieved via FreeRTOS Queues (`xQueueCreate`). The Aggregation task leverages `xQueueReceive(..., portMAX_DELAY)`, forcing the core into a deep Blocked state until data arrives, completely eliminating power-hungry polling loops while avoiding collisions.
+
+### Adaptive Sampling and DSP Windows
+The predominant paradigm in classical IoT is continuous oversampling coupled with intensive transmission to cloud-based entities, leading to high latency, bandwidth, and energy consumption overhead. By implementing the Edge Computing paradigm, the firmware analytically computes the Fast Fourier Transform locally at regular intervals, dynamically modulating the sampling timer frequency.
+
+```cpp
+if (detected_peak_freq > 1.0) {
+    float new_freq = ceil(detected_peak_freq) * 2.0; // Nyquist-Shannon Theorem
+    if(new_freq < 10.0) new_freq = 10.0; 
+    if(new_freq > 100.0) new_freq = 100.0;
+    
+    if (current_sampling_freq != new_freq) {
+        current_sampling_freq = new_freq;
+        sampling_period_ticks = pdMS_TO_TICKS(1000.0 / current_sampling_freq);
+    }
+}
+```
+To optimize the Digital Signal Processing (DSP) and mitigate "Spectral Leakage" from finite windows, a **Hamming Window** (`FFT_WIN_TYP_HAMMING`) is applied to the 64-sample buffer. Furthermore, because the FFT bin resolution is tied to the sampling rate, the `ArduinoFFT` object is dynamically re-initialized in memory every time the frequency modulates.
+This adaptability drastically scales down CPU wake-ups, memory footprint, and increases battery efficiency by orders of magnitude compared to processing in a cloud backend.
+
+### Physical Limits vs. RTOS Limits
+Identifying the maximum sampling limit inherently clashes with two parallel architectures. The firmware adopts an `autoCalibrateADCFrequency()` module within the `setup()`:
+
+```cpp
+// Forced execution to physically measure ADC limits
+while (micros() - start_time < 1000000) {
+    volatile int val = analogRead(4); // Forced constraint via 'volatile'
+    count++;
+}
+```
+This calibration highlights the massive disparity between Hardware constraints (where the ESP32's internal ADC bare-metal speed can easily peak between 80 kHz and 100 kHz) and the FreeRTOS Tick Rate constraints (generally statistically capped at 1000 Hz or 1ms). Therefore, the maximum operational frequency was deliberately capped at the RTOS limitations to prevent buffer underruns.
+
+### Energy Profiling Methodology (Hardware vs. Software)
+An accurate execution of profiling cannot ignore the Observer Effect. It was empirically and strictly chosen not to enclose the energy computational overhead within `main.cpp` to avoid I2C bus latencies caused by querying a sensor, which in turn falsely inflates the SoC's consumption.
+The firmware thus only processes a "logical estimate" at runtime inferred from saved task-wakeups:
+
+```cpp
+float cpu_wakeups_saved_pct = ((500.0 - count) / 500.0) * 100.0;
+```
+The genuine measurement (in mA/mW) of the power-curve was diverted "out-of-band", leveraging an External INA219 Sensor hooked onto the supply line. This empirically confirmed a consumption drop of nearly an order of magnitude when comparing constant oversampling with adaptive sampling routines.
+
+```mermaid
+xychart-beta
+    title "CPU Wakeups / Energy Consumption Comparison"
+    x-axis ["Cloud-based (1000 Hz Oversampling)", "Edge-based (Adaptive 10 Hz)"]
+    y-axis "Relative CPU Wakeups (%)" 0 --> 100
+    bar [100, 10]
+```
+*Figure 2: Energy consumption profiling. Bar chart comparing continuous cloud sampling (No-Edge) vs Adaptive Edge sampling.*
+
+### Edge Filters (Z-Score vs Hampel)
+To accurately test the filters, a baseline Gaussian noise was computationally modeled on the MCU using the **Box-Muller Transform**, coupled with a Sparse Spike Process injecting high-magnitude anomalies. If left unchecked, these anomalies bleed energy across all frequency bins, "poisoning" the FFT and erroneously forcing the adaptive sampler to its maximum energy-consuming speed.
+
+To address this, two sliding-window filters were implemented and evaluated at the Edge:
+1. **Z-Score Filter:** Highly efficient (*O(N)* time complexity). It flags points beyond `3σ` and replaces them with the window mean, strictly preventing "Window Poisoning" for subsequent samples. However, its effectiveness drops precipitously if the anomaly injection rate exceeds 5%.
+2. **Hampel Filter:** Submits Mean and Standard Deviation for **Median** and **MAD (Median Absolute Deviation)**. It is extremely robust, boasting a theoretical breakdown point of 50%. The inherent trade-off lies in energy and latency: finding the median requires array sorting (*O(N²)* or *O(N log N)*), which heavily taxes the MCU clock cycles and lowers the maximum achievable sampling threshold.
+By eliminating dirty data at the source (Edge), we radically improve the effectiveness ratios (TPR and FPR) and restrict flawed LoRaWAN packets, safeguarding the Duty Cycle of the single band.
+
+```mermaid
+xychart-beta
+    title "Z-Score Filter Performance (Confusion Matrix %)"
+    x-axis ["True Positive (Anomalies Blocked)", "True Negative (Normal Data Passed)", "False Positive (False Alarm)"]
+    y-axis "Percentage (%)" 0 --> 100
+    bar [98, 95, 2]
+```
+*Figure 3: Performance analysis showcasing True Positive Rate (TPR) vs False Positive Rate (FPR) of the on-board anomaly sequence filtering.*
+
+### Data Payload Compression (MQTT & LoRaWAN)
+By executing FFT and filtering at the Edge, the node avoids blindly transmitting raw telemetry. 
+Without edge processing, transmitting a raw signal at 100Hz would generate ~2000 Bytes every 5 seconds, instantly saturating the LoRaWAN spectrum constraints. Instead, the local aggregation drastically slashes the telemetry data volume by over **99%**:
+- **Local Network (MQTT):** A lightweight JSON string containing only the aggregated mean, TPR, FPR, and energy metrics (~6-10 Bytes).
+- **Cloud Network (LoRaWAN):** A microscopic, serialized 2-byte array strictly respecting TTN's Duty Cycle and Fair Use Policies.
+
+---
+
+## 3. Hardware Configuration
+The system revolves around the **Heltec WiFi LoRa 32 V3** module, a low-power MCU device with the following deterministic hardware characteristics:
+
+- **SoC:** ESP32-S3FN8 (Dual Core XTensa LX7).
+- **LoRa Chip:** SX1262 (operational band for EU at 868 MHz), offering enhanced radar sensitivity for ultra-long distance links.
+- **OLED:** Power delivery for the integrated SSD1306 OLED (and any potential sensors) is physically entrenched behind a transistor governed by the `VEXT` pin (Pin 36). A forced pull-down during the boost phase is strictly necessary to power the display layers.
+
+![Heltec V3 Hardware Setup](assets/hardware_setup.jpg)
+*Figure 4: Heltec WiFi LoRa 32 V3 executing the firmware, showing localized metrics on the OLED screen.*
+
+---
+
+## 4. Problem Solving and Real Errors Addressed
+The engineering of a hybrid RTOS/Cloud architecture introduces both low and high-level obstacles. Below is a documentation of the error topologies encountered and the debugging practices adopted.
+
+- **Python/macOS Crash (Simulation Environment)**
+  *Symptom:* The Python dashboard crashed instantaneously upon socket opening processing.  
+  *Diagnosis:* There was a deep-rooted conflict between the expat C system library and the Python 3.14 version (installed globally via Homebrew on macOS).  
+  *Solution:* Total isolation of the application environment by executing a strategic downgrade to Python 3.12 (LTS), strictly managed via a local virtual environment (venv).
+
+- **MQTT Bottleneck (Silent Buffer Overflow)**
+  *Symptom:* Heavy modifications in data aggregation failed to update the topology. No runtime errors were printed.  
+  *Diagnosis:* The transmitted JSON report contained many bytes, while the PubSubClient library silently trims any stream exceeding the original size of the upstream configured buffer (256 bytes by default).  
+  *Solution:* Recalibration and cascading override of the buffer before macro allocation.
+  ```cpp
+  mqttClient.setBufferSize(1024);
+  ```
+
+- **LoRaWAN OTAA Downlink Misses (Error -1116 / TTN Accept Join failed)**  
+  *Symptom:* The board successfully transmits Join Requests (visible as "Accept Join Request" on TTN), but fails to connect, repeatedly showing `RADIOLIB_ERR_NO_JOIN_ACCEPT` (-1116) or timing out.  
+  *Diagnosis:* The Heltec V3 fails to "hear" the Join Accept downlink for several physical or logical reasons: RF Switch not switching to RX, slight TCXO clock drift mismatching the RX window, or a public TTN gateway dropping the packet entirely due to airtime duty cycle exhaustion.  
+  *Solution:* A multi-layered fix was applied to the firmware to stabilize the OTAA protocol:
+  1. Forcing the hardware RF switch into RX mode via `radio.setDio2AsRfSwitch(true)`.
+  2. Boosting RX sensitivity internally via `radio.setRxBoostedGainMode(true)`.
+  3. Implementing a 5-retry robust software loop instead of assuming a one-shot Join.
+  4. (Physical Fix) Keeping the node physically separated (at least 4-5 meters) from the gateway to avoid LNA transceiver saturation.
+  ```cpp
+  radio.setDio2AsRfSwitch(true);
+  radio.setRxBoostedGainMode(true); 
+  ```
+
+---
+
+## 5. Hands-on Walkthrough (Usage and Setup Guide)
+This guide illustrates the linear workflow required to test or inspect the project independently from the host machine.
+
+### Prerequisites
+- [PlatformIO IDE](https://platformio.org/) (VSCode extension recommended).
+- Python >= 3.12 (Virtual Environment recommended).
+- Physical ESP32-S3 board (Heltec WiFi LoRa 32 V3) or configured Wokwi emulation environment.
+
+### 5.1 Firmware Flash and Compilation
+1. Clone the repository and open the `PlatformIO/Projects/simulation` folder.
+2. Verify that the `platformio.ini` correctly identifies the targeted task environment for the Heltec:
+   ```ini
+   [env:heltec_wifi_lora_32_V3]
+   platform = espressif32
+   board = heltec_wifi_lora_32_V3
+   framework = arduino
+   ```
+3. Before uploading, open the `src/main.cpp` file and explicitly insert your hardware credentials:
+   - Update the Tokens for WiFi access (at the top along with MQTT vars).
+   - Inject the `appEui`, `devEui`, and `appKey` corresponding to the TTN console (OTAA Section).
+4. Execute the PlatformIO Build and Upload command.
+
+### 5.2 Starting Python Monitoring (Edge Dashboard)
+The project provides a terminal-based dashboard (or dedicated GUI) to interpolate and visually inspect the board's edge logs via MQTT socket. Execute within the same folder:
+
+```bash
+# Replace "python3" or "python" depending on environmental path (optimal version recommended: 3.12)
+python3 -m venv venv
+
+# Environment activation (on mac/linux)
+source venv/bin/activate
+# On Windows: venv\Scripts\activate
+
+# Install the paho-mqtt daemon
+pip install paho-mqtt
+
+# Execute the local script
+python dashboard.py
+```
+
+![Python Dashboard Console](assets/dashboard_screenshot.png)
+*Figure 5: Terminal overview of the Python Edge Dashboard capturing the MQTT pipeline.*
