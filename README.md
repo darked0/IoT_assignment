@@ -39,8 +39,14 @@ In the embryonic phase, hardware-in-the-loop simulations were employed via the W
 - Structuring and debugging of operational thread partitioning using FreeRTOS, ensuring stability between task scheduling and inter-process queues (`QueueHandle_t`).
 - Validation of the accuracy of anomaly detection filters (Z-Score and Hampel) in an offline and highly predictable environment, completely eliminating theoretical-hardware risks prior to deployment.
 
+![Wokwi Setup](assets/wokwi_setup.png)
+*Figure 2: Wokwi simulation environment setup.*
+
 ### Phase 2: Real Hardware and Deployment
 Following the successful outcome of the simulations, the firmware was physically ported to the Heltec WiFi LoRa 32 V3 (based on ESP32-S3) board. During this migration, the specific pinout of the physical board was adapted, implementing the correct I2C management for the OLED and the proper manipulation of the logical `VEXT` pin to govern on-demand power delivery to the screen's secondary electronics.
+
+![Initializing](assets/initializing.png)
+*Figure 3: Initialization of the ESP32-S3.*
 
 ---
 
@@ -79,25 +85,38 @@ while (micros() - start_time < 1000000) {
     count++;
 }
 ```
+
+![Boot](assets/boot.png)
+*Figure 4: Initializing the OS on the ESP32-S3.*
+
 This calibration highlights the massive disparity between Hardware constraints (where the ESP32's internal ADC bare-metal speed can easily peak between 10 kHz and 20 kHz) and the FreeRTOS Tick Rate constraints (generally statistically capped at 1000 Hz or 1ms). Therefore, the maximum operational frequency was deliberately capped at the RTOS limitations to prevent buffer underruns.
 
-### Energy Profiling Methodology (Hardware vs. Software)
-An accurate execution of profiling cannot ignore the Observer Effect. It was empirically and strictly chosen not to enclose the energy computational overhead within `main.cpp` to avoid I2C bus latencies caused by querying a sensor, which in turn falsely inflates the SoC's consumption.
-The firmware thus only processes a "logical estimate" at runtime inferred from saved task-wakeups:
+### Out-of-Band Energy Profiling Setup (Dual ESP32 & INA219)
+To accurately measure the system's power consumption without skewing the results—a phenomenon known in software engineering as the Observer Effect—an out-of-band hardware profiling methodology was adopted. Instead of embedding energy-measuring routines within the primary firmware, the physical setup utilizes a secondary, dedicated ESP32 paired with an INA219 current sensor. The primary ESP32 acts strictly as the Device Under Test (DUT), running the pure Edge computing and communication tasks (FFT, filtering, LoRaWAN/MQTT) without any added overhead. Meanwhile, the second ESP32 acts as an external data logger, polling the INA219 via I2C to precisely measure the voltage and current draw (mA) of the DUT. This dual-board configuration ensures that the I2C polling latency and mathematical computations required for energy tracking do not interfere with the CPU wake-up cycles of the main system, yielding empirical and completely unadulterated data on the actual power savings achieved by the adaptive sampling algorithm.
+
+![Heltec V3 Hardware Setup (2)](assets/hardware_setup_2.jpg)
+*Figure 5: Heltec WiFi LoRa 32 V3 executing the firmware, showing localized metrics on the OLED screen.*
+
+The primary firmware thus only calculates a "logical estimate" at runtime inferred from saved task-wakeups:
 
 ```cpp
 float cpu_wakeups_saved_pct = ((500.0 - count) / 500.0) * 100.0;
 ```
-The genuine measurement (in mA/mW) of the power-curve was diverted "out-of-band", leveraging an External INA219 Sensor hooked onto the supply line. This empirically confirmed a consumption drop of nearly an order of magnitude when comparing constant oversampling with adaptive sampling routines.
+
+> **Note:** While the `main.cpp` code only calculates a simulated "logical estimate" of the energy saved based on CPU task wake-ups, the specific consumption data presented in the chart below reflects the **true, verified empirical tests** physically conducted via the dual-ESP32 out-of-band hardware setup.
+
 
 ```mermaid
 xychart-beta
     title "CPU Wakeups / Energy Consumption Comparison"
-    x-axis ["Cloud-based (1000 Hz Oversampling)", "Edge-based (Adaptive 10 Hz)"]
+    x-axis ["Cloud-based (Continuous Oversampling)", "Edge-based (Adaptive Sampling)"]
     y-axis "Relative CPU Wakeups (%)" 0 --> 100
-    bar [100, 10]
+    bar [100, 28]
 ```
-*Figure 2: Energy consumption profiling. Bar chart comparing continuous cloud sampling (No-Edge) vs Adaptive Edge sampling.*
+*Figure 6: Energy consumption profiling. Bar chart comparing continuous cloud sampling (No-Edge) vs Adaptive Edge sampling.*
+
+### Synthetic Signal Generation and Fault Injection
+To evaluate the Edge computing pipeline without relying on a physical vibration or acoustic sensor, the raw input signal is mathematically synthesized directly on the ESP32 within a dedicated FreeRTOS task. The synthetic signal is constructed as a composite waveform: its foundation is a pure sine wave operating at a dynamically adjustable base frequency, which serves as the ground truth for the subsequent FFT algorithm. To accurately mimic real-world environmental conditions, baseline white noise is superimposed onto the sine wave using the ESP32's internal hardware random number generator (`esp_random()`). Furthermore, to rigorously test the robustness of the anomaly detection system, high-amplitude spikes are stochastically injected into the data stream based on a configurable probability threshold. This fault-injection mechanism effectively simulates sudden mechanical shocks or transient sensor malfunctions, generating a chaotic raw dataset that is subsequently fed into the DSP and filtering stages.
 
 ### Edge Filters (Z-Score vs Hampel)
 To accurately test the filters, a baseline Gaussian noise was computationally modeled on the MCU using the **Box-Muller Transform**, coupled with a Sparse Spike Process injecting high-magnitude anomalies. If left unchecked, these anomalies bleed energy across all frequency bins, "poisoning" the FFT and erroneously forcing the adaptive sampler to its maximum energy-consuming speed.
@@ -112,15 +131,26 @@ xychart-beta
     title "Z-Score Filter Performance (Confusion Matrix %)"
     x-axis ["True Positive (Anomalies Blocked)", "True Negative (Normal Data Passed)", "False Positive (False Alarm)"]
     y-axis "Percentage (%)" 0 --> 100
-    bar [98, 95, 2]
+    bar [52, 99, 1]
 ```
-*Figure 3: Performance analysis showcasing True Positive Rate (TPR) vs False Positive Rate (FPR) of the on-board anomaly sequence filtering.*
+*Figure 7: Performance analysis showcasing True Positive Rate (TPR) vs False Positive Rate (FPR) of the on-board anomaly sequence filtering.*
 
 ### Data Payload Compression (MQTT & LoRaWAN)
 By executing FFT and filtering at the Edge, the node avoids blindly transmitting raw telemetry. 
 Without edge processing, transmitting a raw signal at 100Hz would generate ~2000 Bytes every 5 seconds, instantly saturating the LoRaWAN spectrum constraints. Instead, the local aggregation drastically slashes the telemetry data volume by over **99%**:
 - **Edge Network (MQTT):** A lightweight JSON string containing only the aggregated mean, TPR, FPR, and energy metrics (~6-10 Bytes).
 - **Cloud Network (LoRaWAN):** A microscopic, serialized 2-byte array strictly respecting TTN's Duty Cycle and Fair Use Policies.
+
+![Heltec V3 LoRaWAN Connection](assets/lora_connection.png)
+*Figure 8: LoRaWAN connection on TTN.*
+
+
+### Cloud Decoding via Custom Payload Formatter (TTN)
+A crucial element of the Cloud architecture is the custom Javascript script (Payload Formatter) implemented directly on The Things Network console. To comply with the strict Duty Cycle and Fair Use Policy constraints of the LoRaWAN network, the Edge node (ESP32) transmits the aggregated data compressed into an ultra-lightweight 2-byte binary payload. The TTN script acts as real-time decoding middleware: it intercepts the raw radio uplink (in hexadecimal format), performs bitwise operations while correctly handling the two's complement for negative values, and restores the original decimal value (float) by dividing the result by 100. This solution perfectly bridges the gap between raw Edge bandwidth efficiency and Cloud usability, transforming a minimal byte array into a structured, human-readable JSON format (e.g., `{"average": 0.04}`), immediately ready for integration with external dashboards or databases.
+
+![Heltec V3 LoRaWAN Connection](assets/lorawan_formatter.png)
+*Figure 9: TTN Payload Formatter script for decoding the LoRaWAN data.*
+
 
 ---
 
@@ -132,7 +162,7 @@ The system revolves around the **Heltec WiFi LoRa 32 V3** module, a low-power MC
 - **OLED:** Power delivery for the integrated SSD1306 OLED (and any potential sensors) is physically entrenched behind a transistor governed by the `VEXT` pin (Pin 36). A forced pull-down during the boost phase is strictly necessary to power the display layers.
 
 ![Heltec V3 Hardware Setup](assets/hardware_setup.jpg)
-*Figure 4: Heltec WiFi LoRa 32 V3 executing the firmware, showing localized metrics on the OLED screen.*
+*Figure 10: Heltec WiFi LoRa 32 V3 executing the firmware, showing localized metrics on the OLED screen.*
 
 ---
 
@@ -164,7 +194,6 @@ The engineering of a hybrid RTOS/Cloud architecture introduces both low and high
   radio.setDio2AsRfSwitch(true);
   radio.setRxBoostedGainMode(true); 
   ```
-
 ---
 
 ## 5. Hands-on Walkthrough (Usage and Setup Guide)
@@ -208,4 +237,4 @@ python dashboard.py
 ```
 
 ![Python Dashboard Console](assets/dashboard_screenshot.png)
-*Figure 5: Terminal overview of the Python Edge Dashboard capturing the MQTT pipeline.*
+*Figure 11: Terminal overview of the Python Edge Dashboard capturing the MQTT pipeline.*
