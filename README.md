@@ -40,12 +40,14 @@ In the embryonic phase, hardware-in-the-loop simulations were employed via the W
 - Validation of the accuracy of anomaly detection filters (Z-Score and Hampel) in an offline and highly predictable environment, completely eliminating theoretical-hardware risks prior to deployment.
 
 ![Wokwi Setup](assets/digital_twin.png)
+
 *Figure 2: Wokwi simulation environment setup.*
 
 ### Phase 2: Real Hardware and Deployment
 Following the successful outcome of the simulations, the firmware was physically ported to the Heltec WiFi LoRa 32 V3 (based on ESP32-S3) board. During this migration, the specific pinout of the physical board was adapted, implementing the correct I2C management for the OLED and the proper manipulation of the logical `VEXT` pin to govern on-demand power delivery to the screen's secondary electronics.
 
 ![Initializing](assets/initializing.png)
+
 *Figure 3: Initialization of the ESP32-S3.*
 
 ---
@@ -86,7 +88,8 @@ while (micros() - start_time < 1000000) {
 }
 ```
 
-![Boot](assets/boot.png)
+![Boot](assets/boot.jpg)
+
 *Figure 4: Initializing the OS on the ESP32-S3.*
 
 This calibration highlights the massive disparity between Hardware constraints (where the ESP32's internal ADC bare-metal speed can easily peak between 10 kHz and 20 kHz) and the FreeRTOS Tick Rate constraints (generally statistically capped at 1000 Hz or 1ms). Therefore, the maximum operational frequency was deliberately capped at the RTOS limitations to prevent buffer underruns.
@@ -95,6 +98,7 @@ This calibration highlights the massive disparity between Hardware constraints (
 To accurately measure the system's power consumption without skewing the results—a phenomenon known in software engineering as the Observer Effect—an out-of-band hardware profiling methodology was adopted. Instead of embedding energy-measuring routines within the primary firmware, the physical setup utilizes a secondary, dedicated ESP32 paired with an INA219 current sensor. The primary ESP32 acts strictly as the Device Under Test (DUT), running the pure Edge computing and communication tasks (FFT, filtering, LoRaWAN/MQTT) without any added overhead. Meanwhile, the second ESP32 acts as an external data logger, polling the INA219 via I2C to precisely measure the voltage and current draw (mA) of the DUT. This dual-board configuration ensures that the I2C polling latency and mathematical computations required for energy tracking do not interfere with the CPU wake-up cycles of the main system, yielding empirical and completely unadulterated data on the actual power savings achieved by the adaptive sampling algorithm.
 
 ![Heltec V3 Hardware Setup (2)](assets/hardware_setup_2.jpg)
+
 *Figure 5: Heltec WiFi LoRa 32 V3 executing the firmware, showing localized metrics on the OLED screen.*
 
 The primary firmware thus only calculates a "logical estimate" at runtime inferred from saved task-wakeups:
@@ -142,6 +146,7 @@ Without edge processing, transmitting a raw signal at 100Hz would generate ~2000
 - **Cloud Network (LoRaWAN):** A microscopic, serialized 2-byte array strictly respecting TTN's Duty Cycle and Fair Use Policies.
 
 ![Heltec V3 LoRaWAN Connection](assets/lora_connection.png)
+
 *Figure 8: LoRaWAN connection on TTN.*
 
 
@@ -149,6 +154,7 @@ Without edge processing, transmitting a raw signal at 100Hz would generate ~2000
 A crucial element of the Cloud architecture is the custom Javascript script (Payload Formatter) implemented directly on The Things Network console. To comply with the strict Duty Cycle and Fair Use Policy constraints of the LoRaWAN network, the Edge node (ESP32) transmits the aggregated data compressed into an ultra-lightweight 2-byte binary payload. The TTN script acts as real-time decoding middleware: it intercepts the raw radio uplink (in hexadecimal format), performs bitwise operations while correctly handling the two's complement for negative values, and restores the original decimal value (float) by dividing the result by 100. This solution perfectly bridges the gap between raw Edge bandwidth efficiency and Cloud usability, transforming a minimal byte array into a structured, human-readable JSON format (e.g., `{"average": 0.04}`), immediately ready for integration with external dashboards or databases.
 
 ![Heltec V3 LoRaWAN Connection](assets/lorawan_formatter.png)
+
 *Figure 9: TTN Payload Formatter script for decoding the LoRaWAN data.*
 
 
@@ -162,6 +168,7 @@ The system revolves around the **Heltec WiFi LoRa 32 V3** module, a low-power MC
 - **OLED:** Power delivery for the integrated SSD1306 OLED (and any potential sensors) is physically entrenched behind a transistor governed by the `VEXT` pin (Pin 36). A forced pull-down during the boost phase is strictly necessary to power the display layers.
 
 ![Heltec V3 Hardware Setup](assets/hardware_setup.jpg)
+
 *Figure 10: Heltec WiFi LoRa 32 V3 executing the firmware, showing localized metrics on the OLED screen.*
 
 ---
@@ -236,5 +243,5 @@ pip install paho-mqtt
 python dashboard.py
 ```
 
-![Python Dashboard Console](assets/dashboard_screenshot.png)
+![Python Dashboard Console](assets/dashboard.png)
 *Figure 11: Terminal overview of the Python Edge Dashboard capturing the MQTT pipeline.*
