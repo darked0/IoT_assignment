@@ -112,12 +112,23 @@ float cpu_wakeups_saved_pct = ((500.0 - count) / 500.0) * 100.0;
 
 ```mermaid
 xychart-beta
-    title "CPU Wakeups / Energy Consumption Comparison"
-    x-axis ["Cloud-based (Continuous Oversampling)", "Edge-based (Adaptive Sampling)"]
-    y-axis "Relative CPU Wakeups (%)" 0 --> 100
-    bar [100, 28]
+    title "Average Power Consumption (INA219)"
+    x-axis ["Baseline (1000 Hz)", "Adaptive (10 Hz)", "Adaptive + Sleep"]
+    y-axis "Power (mW)" 0 --> 600
+    bar [553.0, 552.7, 410.9]
 ```
-*Figure 6: Energy consumption profiling. Bar chart comparing continuous cloud sampling (No-Edge) vs Adaptive Edge sampling.*
+
+```mermaid
+xychart-beta
+    title "Integrated Energy over Run (INA219)"
+    x-axis ["Baseline (1000 Hz)", "Adaptive (10 Hz)", "Adaptive + Sleep"]
+    y-axis "Energy (mWh)" 0 --> 20
+    bar [18.4, 18.4, 13.6]
+```
+
+*Figure 6: Energy consumption profiling. Bar charts comparing Baseline continuous sampling, Adaptive Edge sampling without sleep, and Adaptive Edge sampling with Sleep.*
+
+Switching from a fixed to an adaptive sampling rate (without sending the CPU to sleep) saves a meager ~0.06% of energy (553.0 mW vs 552.7 mW). The true drastic reduction (-25.7%, dropping to 410.9 mW) is only achieved when adaptive sampling is combined with FreeRTOS's Deep Sleep or Tickless Idle policies (which exactly corresponds to the avoided "CPU wakeups" discussed earlier!).
 
 ### Synthetic Signal Generation and Fault Injection
 To evaluate the Edge computing pipeline without relying on a physical vibration or acoustic sensor, the raw input signal is mathematically synthesized directly on the ESP32 within a dedicated FreeRTOS task. The synthetic signal is constructed as a composite waveform: its foundation is a pure sine wave operating at a dynamically adjustable base frequency, which serves as the ground truth for the subsequent FFT algorithm. To accurately mimic real-world environmental conditions, baseline white noise is superimposed onto the sine wave using the ESP32's internal hardware random number generator (`esp_random()`). Furthermore, to rigorously test the robustness of the anomaly detection system, high-amplitude spikes are stochastically injected into the data stream based on a configurable probability threshold. This fault-injection mechanism effectively simulates sudden mechanical shocks or transient sensor malfunctions, generating a chaotic raw dataset that is subsequently fed into the DSP and filtering stages.
