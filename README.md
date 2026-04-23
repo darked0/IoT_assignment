@@ -6,7 +6,7 @@ This repository documents a complete Edge-to-Cloud infrastructure developed to o
 graph LR
     subgraph ESP32["ESP32-S3 (Edge Node)"]
         direction LR
-        SG[Signal Generation] -->|Raw Data| FLT[Edge Filter]
+        SG[Signal Generation] -->|Raw Data| FLT[Math Filter]
         FLT -->|Clean Data| FFT[FFT Processing]
         FFT -->|Adaptive Freq| SG
         FLT -->|Clean Data| AGG[Aggregation Task]
@@ -97,6 +97,16 @@ while (micros() - start_time < 1000000) {
 *Figure 4: Initializing the OS on the ESP32-S3.*
 
 This calibration highlights the massive disparity between Hardware constraints (where the ESP32's internal ADC bare-metal speed can easily peak between 10 kHz and 20 kHz) and the FreeRTOS Tick Rate constraints (generally statistically capped at 1000 Hz or 1ms). Therefore, the maximum operational frequency was deliberately capped at the RTOS limitations to prevent buffer underruns.
+
+### Blind Boot and Cascade Adaptation (The 1000 Hz Paradox)
+Starting the system at an extremely high sampling rate ($1000\text{ Hz}$) might initially seem counterintuitive for an energy-saving algorithm, but it is a critical requirement for a truly autonomous Edge node. When the ESP32 powers on, it operates in a "blind" state, unaware of the physical environment it is attached to (e.g., a slow bridge vibrating at $5\text{ Hz}$ vs an industrial turbine vibrating at $400\text{ Hz}$). If the system hardcoded its boot frequency to $10\text{ Hz}$, any high-frequency vibration would trigger severe Aliasing, rendering the FFT permanently blind to the true nature of the signal and trapping the system at an incorrect sampling rate. 
+
+By aggressively booting at the maximum hardware-allowed limit ($1000\text{ Hz}$), the FFT casts the widest possible net, covering the entire spectrum up to $500\text{ Hz}$ (Nyquist limit) without any aliasing risk. However, at $1000\text{ Hz}$, the 64-sample buffer fills in just $0.064\text{ s}$, creating a poor frequency resolution of $\sim 15.6\text{ Hz}$. The system correctly manages this through a **Cascade Adaptation**:
+1. **First Cycle ($1000\text{ Hz}$):** The FFT detects low-frequency energy but clumps it into the $15.6\text{ Hz}$ bin. It commands a safe downscale to $32\text{ Hz}$.
+2. **Second Cycle ($32\text{ Hz}$):** The buffer now takes $2.0\text{ s}$ to fill. The FFT resolution sharpens drastically to $0.5\text{ Hz}$. It clearly resolves the true $5\text{ Hz}$ peak.
+3. **Final Adaptation ($10\text{ Hz}$):** The system scales down perfectly to $10\text{ Hz}$, entering its optimal Deep Sleep routine.
+
+This engineered 2-step cascade allows the system to autonomously discover its environment without prior configuration, avoiding aliasing while eventually guaranteeing maximum energy efficiency.
 
 ### Out-of-Band Energy Profiling Setup (Dual ESP32 & INA219)
 To accurately measure the system's power consumption without skewing the results—a phenomenon known in software engineering as the Observer Effect—an out-of-band hardware profiling methodology was adopted. Instead of embedding energy-measuring routines within the primary firmware, the physical setup utilizes a secondary, dedicated ESP32 paired with an INA219 current sensor. The primary ESP32 acts strictly as the Device Under Test (DUT), running the pure Edge computing and communication tasks (FFT, filtering, LoRaWAN/MQTT) without any added overhead. Meanwhile, the second ESP32 acts as an external data logger, polling the INA219 via I2C to precisely measure the voltage and current draw (mA) of the DUT. This dual-board configuration ensures that the I2C polling latency and mathematical computations required for energy tracking do not interfere with the CPU wake-up cycles of the main system, yielding empirical and completely unadulterated data on the actual power savings achieved by the adaptive sampling algorithm.
