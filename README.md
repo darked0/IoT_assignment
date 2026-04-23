@@ -75,6 +75,10 @@ if (detected_peak_freq > 1.0) {
     }
 }
 ```
+
+> [!NOTE]
+> **Safety Clamping:** The dynamically calculated frequency is explicitly bounded between $10\text{ Hz}$ and $100\text{ Hz}$. The lower bound prevents division-by-zero errors and ensures a minimum system heartbeat, avoiding massive data stalls (e.g., at $1\text{ Hz}$, the buffer would take $64\text{ s}$ to fill, paralyzing the MQTT dashboard). Conversely, the upper bound protects the FreeRTOS scheduler: capping the maximum rate prevents high-frequency noise spikes from causing CPU starvation or triggering a Hardware Watchdog Timer (WDT) reset, guaranteeing production-ready stability.
+
 To optimize the Digital Signal Processing (DSP) and mitigate "Spectral Leakage" from finite windows, a **Hamming Window** (`FFT_WIN_TYP_HAMMING`) is applied to the 64-sample buffer. Furthermore, because the FFT bin resolution is tied to the sampling rate, the `ArduinoFFT` object is dynamically re-initialized in memory every time the frequency modulates.
 This adaptability drastically scales down CPU wake-ups, memory footprint, and increases battery efficiency by orders of magnitude compared to processing in a cloud backend.
 
@@ -99,9 +103,9 @@ while (micros() - start_time < 1000000) {
 This calibration highlights the massive disparity between Hardware constraints (where the ESP32's internal ADC bare-metal speed can easily peak between 10 kHz and 20 kHz) and the FreeRTOS Tick Rate constraints (generally statistically capped at 1000 Hz or 1ms). Therefore, the maximum operational frequency was deliberately capped at the RTOS limitations to prevent buffer underruns.
 
 ### Blind Boot and Cascade Adaptation (The 1000 Hz Paradox)
-Starting the system at an extremely high sampling rate ($1000\text{ Hz}$) might initially seem counterintuitive for an energy-saving algorithm, but it is a critical requirement for a truly autonomous Edge node. When the ESP32 powers on, it operates in a "blind" state, unaware of the physical environment it is attached to (e.g., a slow bridge vibrating at $5\text{ Hz}$ vs an industrial turbine vibrating at $400\text{ Hz}$). If the system hardcoded its boot frequency to $10\text{ Hz}$, any high-frequency vibration would trigger severe Aliasing, rendering the FFT permanently blind to the true nature of the signal and trapping the system at an incorrect sampling rate. 
+Starting the system at an extremely high sampling rate might initially seem counterintuitive for an energy-saving algorithm, but it is a critical requirement for a truly autonomous Edge node. When the ESP32 powers on, it operates in a "blind" state, unaware of the physical environment it is attached to (e.g., a slow bridge vibrating at $5\text{ Hz}$ vs an industrial turbine vibrating at $400\text{ Hz}$). If the system hardcoded its boot frequency to $10\text{ Hz}$, any high-frequency vibration would trigger severe Aliasing, rendering the FFT permanently blind to the true nature of the signal and trapping the system at an incorrect sampling rate. 
 
-By aggressively booting at the maximum hardware-allowed limit ($1000\text{ Hz}$), the FFT casts the widest possible net, covering the entire spectrum up to $500\text{ Hz}$ (Nyquist limit) without any aliasing risk. However, at $1000\text{ Hz}$, the 64-sample buffer fills in just $0.064\text{ s}$, creating a poor frequency resolution of $\sim 15.6\text{ Hz}$. The system correctly manages this through a **Cascade Adaptation**:
+By aggressively booting at the maximum hardware-allowed limit, the FFT casts the widest possible net, covering the entire spectrum up to $500\text{ Hz}$ (Nyquist limit) without any aliasing risk. However, at $1000\text{ Hz}$, the 64-sample buffer fills in just $0.064\text{ s}$, creating a poor frequency resolution of $\sim 15.6\text{ Hz}$. The system correctly manages this through a **Cascade Adaptation**:
 1. **First Cycle ($1000\text{ Hz}$):** The FFT detects low-frequency energy but clumps it into the $15.6\text{ Hz}$ bin. It commands a safe downscale to $32\text{ Hz}$.
 2. **Second Cycle ($32\text{ Hz}$):** The buffer now takes $2.0\text{ s}$ to fill. The FFT resolution sharpens drastically to $0.5\text{ Hz}$. It clearly resolves the true $5\text{ Hz}$ peak.
 3. **Final Adaptation ($10\text{ Hz}$):** The system scales down perfectly to $10\text{ Hz}$, entering its optimal Deep Sleep routine.
@@ -127,22 +131,37 @@ float cpu_wakeups_saved_pct = ((500.0 - count) / 500.0) * 100.0;
 ```mermaid
 xychart-beta
     title "Average Power Consumption (INA219)"
-    x-axis ["Baseline (1000 Hz)", "Adaptive (10 Hz)", "Adaptive + Sleep"]
+    x-axis ["Baseline (1000 Hz)", "Adaptive + Sleep"]
     y-axis "Power (mW)" 0 --> 600
-    bar [553.0, 552.7, 410.9]
+    bar [553.0, 410.9]
 ```
 
 ```mermaid
 xychart-beta
     title "Integrated Energy over Run (INA219)"
-    x-axis ["Baseline (1000 Hz)", "Adaptive (10 Hz)", "Adaptive + Sleep"]
+    x-axis ["Baseline (1000 Hz)", "Adaptive + Sleep"]
     y-axis "Energy (mWh)" 0 --> 20
-    bar [18.4, 18.4, 13.6]
+    bar [18.4, 13.6]
 ```
 
 *Figure 6: Energy consumption profiling. Bar charts comparing Baseline continuous sampling, Adaptive Edge sampling without sleep, and Adaptive Edge sampling with Sleep.*
 
-Switching from a fixed to an adaptive sampling rate (without sending the CPU to sleep) saves a meager ~0.06% of energy (553.0 mW vs 552.7 mW). The true drastic reduction (-25.7%, dropping to 410.9 mW) is only achieved when adaptive sampling is combined with FreeRTOS's Deep Sleep or Tickless Idle policies (which exactly corresponds to the avoided "CPU wakeups" discussed earlier!).
+The reduction (-25.7%, dropping to 410.9 mW) is only achieved when adaptive sampling is combined with FreeRTOS's Deep Sleep or Tickless Idle policies (which exactly corresponds to the avoided "CPU wakeups" discussed earlier).
+
+```mermaid
+xychart-beta
+    title "Average Current Draw (INA219)"
+    x-axis ["Baseline (1000 Hz)", "Adaptive + Sleep"]
+    y-axis "Current (mA)" 0 --> 200
+    bar [167.6, 124.5]
+```
+
+*Figure 7: Current draw comparison highlighting the transition into Sleep states.*
+
+To fully understand the energy savings, it is crucial to map the algorithmic execution directly to the FreeRTOS power states:
+- **Active State:** The system enters this state only during two precise and extremely brief windows: when Core 0 activates the Wi-Fi radio to transmit the MQTT JSON, and when the LoRa SX1262 chip physically transmits the 2-byte payload over the air.
+- **Modem-Sleep (240 MHz):** This is where Core 1 resides while executing the FFT and calculating the Z-Score/Hampel filters. The Wi-Fi is in standby, but the CPU is running at maximum clock speed to perform the heavy math. If the sampling rate remains fixed at $1000\text{ Hz}$, the system is practically trapped in this high-consumption state indefinitely.
+- **Light-Sleep (The FreeRTOS trick):** This is where the magic of the energy reduction occurs. When the FFT decides to adaptively downscale the sampling to $10\text{ Hz}$, the code invokes `vTaskDelay()`. FreeRTOS subsequently issues the `WFI` (Wait For Interrupt) assembly instruction. This halts the $240\text{ MHz}$ CPU clock and lets the microcontroller slide into low-power Idle/Light-Sleep states for 90% of the cycle, while crucially keeping the RAM powered on to preserve the FFT array data intact until the next wake-up.
 
 ### Synthetic Signal Generation and Fault Injection
 To evaluate the Edge computing pipeline without relying on a physical vibration or acoustic sensor, the raw input signal is mathematically synthesized directly on the ESP32 within a dedicated FreeRTOS task. The synthetic signal is constructed as a composite waveform: its foundation is a pure sine wave operating at a dynamically adjustable base frequency, which serves as the ground truth for the subsequent FFT algorithm. To accurately mimic real-world environmental conditions, baseline white noise is superimposed onto the sine wave using the ESP32's internal hardware random number generator (`esp_random()`). Furthermore, to rigorously test the robustness of the anomaly detection system, high-amplitude spikes are stochastically injected into the data stream based on a configurable probability threshold. This fault-injection mechanism effectively simulates sudden mechanical shocks or transient sensor malfunctions, generating a chaotic raw dataset that is subsequently fed into the DSP and filtering stages.
