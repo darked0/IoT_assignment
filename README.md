@@ -6,8 +6,9 @@ This repository documents a complete Edge-to-Cloud infrastructure developed to o
 graph LR
     subgraph ESP32["ESP32-S3 (Edge Node)"]
         direction LR
-        SG[Signal Gen Task] -->|Raw Data| FFT[FFT Task]
-        FFT -->|Adaptive Freq| FLT[Z-Score Filter Task]
+        SG[Signal Generation] -->|Raw Data| FLT[Edge Filter]
+        FLT -->|Clean Data| FFT[FFT Processing]
+        FFT -->|Adaptive Freq| SG
         FLT -->|Clean Data| AGG[Aggregation Task]
     end
 
