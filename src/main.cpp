@@ -472,18 +472,15 @@ void AggregationTask(void *pvParameters) {
 
           // --- METRICS CALCULATION ---
           // Data Volume
-          // Original (no edge): 100Hz * 5 sec = 500 samplings * 4 bytes (float)
-          // = 2000 bytes
-          int data_volume_original = 500 * sizeof(float);
+          int data_volume_original = count * sizeof(float);
           // System (edge computing): Send only our data (es. 6 bytes)
           int data_volume_transmitted = String(average).length();
 
           // Energy Saving Estimation
-          // Savings in terms of CPU wake-ups: if we had sent all 500 samples to
-          // the cloud, the CPU would have woken up 500 times to transmit each
-          // sample. With edge computing, we wake up only once every 5 seconds
-          // to send the aggregated result.
-          float cpu_wakeups_saved_pct = ((500.0 - count) / 500.0) * 100.0;
+          // Savings in terms of CPU wake-ups: if we had sent all 'count'
+          // samples to the cloud, the CPU would have woken up 'count' times to
+          // transmit each sample. With edge computing, we wake up only once
+          float cpu_wakeups_saved_pct = ((count - 1.0) / (float)count) * 100.0;
 
           float tpr = (total_anomalies > 0)
                           ? ((float)true_positives / total_anomalies) * 100.0f
@@ -678,15 +675,16 @@ void setup() {
   if (state == RADIOLIB_ERR_NONE) {
     radio.setDio2AsRfSwitch(true);
     radio.setRxBoostedGainMode(true); // Increases RX sensitivity
-    // RadioLib automatically sets TCXO to 1.6V by default during begin(), which is usually enough for Heltec V3. 
+    // RadioLib automatically sets TCXO to 1.6V by default during begin(), which
+    // is usually enough for Heltec V3.
 
     // LoRaWAN 1.0.x uses NwkKey as AppKey. RadioLib can accept the same array
     // for both.
     node.beginOTAA(appEui, devEui, appKey, appKey);
     Serial.println(
         "[LoRaWAN] Joining TTN via OTAA. This might take a few seconds...");
-    
-    // Sometimes the first Join Accept is missed due to window timing 
+
+    // Sometimes the first Join Accept is missed due to window timing
     // or gateway latency. A retry loop is standard practice.
     int retry = 0;
     state = RADIOLIB_ERR_NETWORK_NOT_JOINED; // Reset state to force the loop
@@ -694,9 +692,9 @@ void setup() {
       Serial.print("Join attempt ");
       Serial.print(retry + 1);
       Serial.println("/5...");
-      
+
       state = node.activateOTAA();
-      
+
       if (state != RADIOLIB_ERR_NONE) {
         Serial.print("Failed (code ");
         Serial.print(state);

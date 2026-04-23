@@ -119,12 +119,6 @@ To accurately measure the system's power consumption without skewing the results
 
 *Figure 5: Heltec WiFi LoRa 32 V3 executing the firmware, showing localized metrics on the OLED screen.*
 
-The primary firmware thus only calculates a "logical estimate" at runtime inferred from saved task-wakeups:
-
-```cpp
-float cpu_wakeups_saved_pct = ((500.0 - count) / 500.0) * 100.0;
-```
-
 > **Note:** While the `main.cpp` code only calculates a simulated "logical estimate" of the energy saved based on CPU task wake-ups, the specific consumption data presented in the chart below reflects the **true, verified empirical tests** physically conducted via the dual-ESP32 out-of-band hardware setup.
 
 
@@ -181,7 +175,7 @@ xychart-beta
     y-axis "Percentage (%)" 0 --> 100
     bar [79.4, 97.8, 2.2]
 ```
-*Figure 7: Performance analysis showcasing True Positive Rate (TPR) vs False Positive Rate (FPR) of the on-board anomaly sequence filtering.*
+*Figure 8: Performance analysis showcasing True Positive Rate (TPR) vs False Positive Rate (FPR) of the on-board anomaly sequence filtering.*
 
 > **Note:** These performance ratios (TPR/FPR) vary dynamically in real-time. By modifying the anomaly injection probability directly from the remote Python GUI, it is possible to observe the shifting effectiveness of the Z-Score filter.
 
@@ -231,7 +225,7 @@ Without edge processing, transmitting a raw signal at 100Hz would generate ~2000
 
 ![Heltec V3 LoRaWAN Connection](assets/lora_connection.png)
 
-*Figure 8: LoRaWAN connection on TTN.*
+*Figure 9: LoRaWAN connection on TTN.*
 
 
 ### Cloud Decoding via Custom Payload Formatter (TTN)
@@ -239,7 +233,7 @@ A crucial element of the Cloud architecture is the custom Javascript script (Pay
 
 ![Heltec V3 LoRaWAN Connection](assets/lorawan_formatter.png)
 
-*Figure 9: TTN Payload Formatter script for decoding the LoRaWAN data.*
+*Figure 10: TTN Payload Formatter script for decoding the LoRaWAN data.*
 
 
 ---
@@ -253,7 +247,7 @@ The system revolves around the **Heltec WiFi LoRa 32 V3** module, a low-power MC
 
 ![Heltec V3 Hardware Setup](assets/hardware_setup.jpg)
 
-*Figure 10: Heltec WiFi LoRa 32 V3 executing the firmware, showing localized metrics on the OLED screen.*
+*Figure 11: Heltec WiFi LoRa 32 V3 executing the firmware, showing localized metrics on the OLED screen.*
 
 ---
 
@@ -333,4 +327,4 @@ python dashboard.py
 ```
 
 ![Python Dashboard Console](assets/dashboard.png)
-*Figure 11: Terminal overview of the Python Edge Dashboard capturing the MQTT pipeline.*
+*Figure 12: Terminal overview of the Python Edge Dashboard capturing the MQTT pipeline.*
