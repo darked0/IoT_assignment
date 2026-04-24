@@ -140,7 +140,7 @@ xychart-beta
 
 *Figure 6: Energy consumption profiling. Bar charts comparing Baseline continuous sampling, Adaptive Edge sampling without sleep, and Adaptive Edge sampling with Sleep.*
 
-The reduction (-25.7%, dropping to 410.9 mW) is only achieved when adaptive sampling is combined with FreeRTOS's Deep Sleep or Tickless Idle policies (which exactly corresponds to the avoided "CPU wakeups" discussed earlier).
+The reduction (-25.7%, dropping to 410.9 mW) is only achieved when adaptive sampling is combined with FreeRTOS's Sleep or Tickless Idle policies (which exactly corresponds to the avoided "CPU wakeups" discussed earlier).
 
 ```mermaid
 xychart-beta
@@ -220,7 +220,7 @@ The increased accuracy of the Hampel filter comes at a strict computational cost
 ### Data Payload Compression (MQTT & LoRaWAN)
 By executing FFT and filtering at the Edge, the node avoids blindly transmitting raw telemetry. 
 Without edge processing, transmitting a raw signal at 100Hz would generate ~2000 Bytes every 5 seconds, instantly saturating the LoRaWAN spectrum constraints. Instead, the local aggregation drastically slashes the telemetry data volume by over **99%**:
-- **Edge Network (MQTT):** A lightweight JSON string containing only the aggregated mean, TPR, FPR, and energy metrics (~6-10 Bytes).
+- **Edge Network (MQTT):** A lightweight JSON string containing the aggregated mean, TPR, FPR, and energy metrics (~80-150 Bytes).
 - **Cloud Network (LoRaWAN):** A microscopic, serialized 2-byte array strictly respecting TTN's Duty Cycle and Fair Use Policies.
 
 ![Heltec V3 LoRaWAN Connection](assets/lora_connection.png)
@@ -308,6 +308,9 @@ This guide illustrates the linear workflow required to test or inspect the proje
 The project provides a terminal-based dashboard (or dedicated GUI) to interpolate and visually inspect the board's edge logs via MQTT socket.
 
 > **Note on Tkinter:** The dashboard relies on the `tkinter` library for its graphical interface. While `tkinter` is generally included in the standard Python installation on Windows and macOS, Linux users may need to install it manually via their package manager (e.g., `sudo apt-get install python3-tk` on Ubuntu/Debian).
+
+> [!TIP]
+> **Remote Anomaly Injection:** The dashboard is not merely a passive log viewer — it supports **bidirectional MQTT communication** with the ESP32. By entering a new value in the "Anomaly Probability" field and pressing "Update ESP32", the GUI publishes a command string (e.g., `P:0.15`) on the dedicated topic `iot/assignment/edge/commands`. On the firmware side, the `mqttCallback()` function in `NetworkModule.cpp` parses incoming messages matching the `P:` prefix and dynamically updates the global `anomaly_probability` variable at runtime, allowing the operator to stress-test the Edge filters (Z-Score/Hampel) without reflashing the board.
 
 Execute within the same folder:
 
