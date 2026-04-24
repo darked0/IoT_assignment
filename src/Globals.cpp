@@ -7,7 +7,7 @@ uint8_t appKey[] = {0x16, 0xDD, 0xAB, 0x26, 0xB9, 0xAC, 0x7E, 0x0E,
                     0x83, 0xC9, 0x9F, 0x8F, 0x31, 0x22, 0xC7, 0xAD};
 
 // --- MQTT AND NETWORK SETUP ---
-const char *ssid = "*********";
+const char *ssid = "";
 const char *password = "";
 const char *mqtt_server = "broker.hivemq.com";
 const int mqtt_port = 1883;
