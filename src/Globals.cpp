@@ -8,7 +8,7 @@ uint8_t appKey[] = {0x16, 0xDD, 0xAB, 0x26, 0xB9, 0xAC, 0x7E, 0x0E,
 
 // --- MQTT AND NETWORK SETUP ---
 const char *ssid = "*********";
-const char *password = "b7dva23vdmeuh78";
+const char *password = "";
 const char *mqtt_server = "broker.hivemq.com";
 const int mqtt_port = 1883;
 const char *mqtt_topic = "iot/assignment/edge/logs";
